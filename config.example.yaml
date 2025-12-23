@@ -1,0 +1,101 @@
+# Dideban Configuration Example
+# Copy this file to config.yaml and modify as needed
+# All values are optional - defaults will be used if not specified
+
+# HTTP Server Configuration
+server:
+  # Server address and port (default: ":8080")
+  # Examples: ":8080", "127.0.0.1:8080", "192.168.1.100:8080"
+  # Env: DIDEBAN_SERVER_ADDR
+  addr: ":8080"
+  
+  # Request read timeout (default: "30s")
+  read_timeout: "30s"
+  
+  # Response write timeout (default: "30s")
+  write_timeout: "30s"
+  
+  # Idle connection timeout (default: "60s")
+  idle_timeout: "60s"
+  
+  # Enable CORS for cross-origin requests (default: false)
+  # Set to true for development or separate frontend
+  enable_cors: false
+
+# SQLite Database Configuration
+storage:
+  # Database file path (default: "dideban.db")
+  # Recommended paths:
+  # - Linux/macOS: "/var/lib/dideban/dideban.db"
+  # - Windows: "C:\\ProgramData\\Dideban\\dideban.db"
+  # Env: DIDEBAN_STORAGE_PATH
+  path: "dideban.db"
+  
+  # Maximum number of open database connections (default: 32)
+  max_open_conns: 32
+  
+  # Maximum number of idle connections (default: 8)
+  max_idle_conns: 8
+  
+  # Maximum connection lifetime (default: "1h")
+  conn_max_lifetime: "1h"
+
+# Alert Configuration
+alert:
+  telegram:
+    # Enable Telegram notifications (default: false)
+    # Env: DIDEBAN_ALERT_TELEGRAM_ENABLED
+    enabled: false
+    
+    # Telegram bot token (get from @BotFather)
+    # Example: "1234567890:ABCdefGHIjklMNOpqrsTUVwxyz"
+    # Env: DIDEBAN_ALERT_TELEGRAM_TOKEN
+    token: ""
+    
+    # Chat ID or channel name (get from @userinfobot)
+    # Examples: "123456789", "@channel_name"
+    # Env: DIDEBAN_ALERT_TELEGRAM_CHAT_ID
+    chat_id: ""
+    
+    # Request timeout (default: "30s")
+    timeout: "30s"
+  
+  bale:
+    # Enable Bale notifications (default: false)
+    # Env: DIDEBAN_ALERT_BALE_ENABLED
+    enabled: false
+    
+    # Bale bot token (create at https://docs.bale.ai)
+    # Env: DIDEBAN_ALERT_BALE_TOKEN
+    token: ""
+    
+    # Bale chat ID
+    # Env: DIDEBAN_ALERT_BALE_CHAT_ID
+    chat_id: ""
+    
+    # Request timeout (default: "30s")
+    timeout: "30s"
+
+# Scheduler Configuration
+scheduler:
+  # Number of concurrent workers for checks (default: 8)
+  worker_count: 8
+  
+  # Default interval between checks (default: "60s")
+  default_interval: "60s"
+  
+  # Maximum retry attempts on check failure (default: 3)
+  max_retries: 3
+
+# Logging Configuration
+log:
+  # Log level (default: "info")
+  # Options: "debug", "info", "warn", "error", "fatal", "panic"
+  # Env: DIDEBAN_LOG_LEVEL
+  level: "info"
+  
+  # Human-readable console output (default: false)
+  # true: colorized console output
+  # false: JSON format for log systems
+  # Env: DIDEBAN_LOG_PRETTY
+  pretty: false
