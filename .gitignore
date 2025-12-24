@@ -73,7 +73,12 @@ web/build/
 # Temporary files
 *.tmp
 *.temp
+
+# Configs
 */config.yaml
 config.yaml
+
+# Dideban binery
 dideban
 dideban.exe
+!cmd/dideban/main.go
