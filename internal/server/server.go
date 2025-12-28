@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"dideban/internal/config"
+	"dideban/internal/storage"
 
 	"github.com/rs/zerolog/log"
 )
@@ -64,6 +65,17 @@ func New(cfg *config.Config) *Server {
 func (s *Server) Start(ctx context.Context) error {
 	// Phase 1: Initialize SQLite storage
 	// This must happen first as all other components depend on it
+	db, err := storage.New(s.cfg.Storage)
+	if err != nil {
+		return fmt.Errorf("failed to initialize storage: %w", err)
+	}
+	defer func() {
+		if closeErr := db.Close(); closeErr != nil {
+			log.Error().Err(closeErr).Msg("Failed to close database connection")
+		}
+	}()
+
+	log.Info().Str("path", s.cfg.Storage.Path).Msg("📦 Storage initialized")
 
 	// Phase 2: Initialize core monitoring engine
 	// The engine manages schedulers, health checks, and alert dispatchers
