@@ -17,23 +17,23 @@ type Entity interface {
 	TableName() string
 }
 
-// Generic provides generic CRUD operations for any entity type.
-type Generic[T Entity] struct {
+// Repository provides generic CRUD operations for any entity type.
+type Repository[T Entity] struct {
 	orm       *ORM
 	tableName string
 }
 
-// NewGeneric creates a new generic repository for type T.
-func NewGeneric[T Entity](orm *ORM) *Generic[T] {
+// NewRepository creates a new repository for type T.
+func NewRepository[T Entity](orm *ORM) *Repository[T] {
 	var zero T
-	return &Generic[T]{
+	return &Repository[T]{
 		orm:       orm,
 		tableName: zero.TableName(),
 	}
 }
 
 // Create inserts a new entity into the database.
-func (r *Generic[T]) Create(ctx context.Context, entity T) (int64, error) {
+func (r *Repository[T]) Create(ctx context.Context, entity T) (int64, error) {
 	// Use reflection to build INSERT query dynamically
 	v := reflect.ValueOf(entity)
 	// If it's a pointer, get the underlying value
@@ -81,9 +81,12 @@ func (r *Generic[T]) Create(ctx context.Context, entity T) (int64, error) {
 		return 0, fmt.Errorf("failed to get %s ID: %w", r.tableName, err)
 	}
 
-	// Set ID field if exists
-	if idField := v.FieldByName("ID"); idField.IsValid() && idField.CanSet() {
-		idField.SetInt(id)
+	// Set ID field if exists and entity is a pointer
+	if reflect.ValueOf(entity).Kind() == reflect.Ptr {
+		entityPtr := reflect.ValueOf(entity)
+		if entityPtr.Kind() == reflect.Ptr && entityPtr.Elem().FieldByName("ID").IsValid() {
+			entityPtr.Elem().FieldByName("ID").SetInt(id)
+		}
 	}
 
 	log.Info().
@@ -95,7 +98,7 @@ func (r *Generic[T]) Create(ctx context.Context, entity T) (int64, error) {
 }
 
 // GetByID retrieves an entity by its ID.
-func (r *Generic[T]) GetByID(ctx context.Context, id int64) (*T, error) {
+func (r *Repository[T]) GetByID(ctx context.Context, id int64) (*T, error) {
 	entities, err := NewSelectBuilderFrom[T](r.orm, r.tableName).
 		Where("id = ?", id).
 		Execute(ctx)
@@ -109,14 +112,14 @@ func (r *Generic[T]) GetByID(ctx context.Context, id int64) (*T, error) {
 }
 
 // GetAll retrieves all entities.
-func (r *Generic[T]) GetAll(ctx context.Context) ([]T, error) {
+func (r *Repository[T]) GetAll(ctx context.Context) ([]T, error) {
 	return NewSelectBuilderFrom[T](r.orm, r.tableName).
 		OrderBy("id DESC").
 		Execute(ctx)
 }
 
 // Update updates an existing entity.
-func (r *Generic[T]) Update(ctx context.Context, entity T) error {
+func (r *Repository[T]) Update(ctx context.Context, entity T) error {
 	v := reflect.ValueOf(entity)
 	// If it's a pointer, get the underlying value
 	if v.Kind() == reflect.Ptr {
@@ -168,7 +171,7 @@ func (r *Generic[T]) Update(ctx context.Context, entity T) error {
 }
 
 // Delete deletes an entity by ID.
-func (r *Generic[T]) Delete(ctx context.Context, id int64) error {
+func (r *Repository[T]) Delete(ctx context.Context, id int64) error {
 	query := fmt.Sprintf("DELETE FROM %s WHERE id = ?", r.tableName)
 	_, err := r.orm.db.ExecContext(ctx, query, id)
 	if err != nil {
@@ -178,14 +181,14 @@ func (r *Generic[T]) Delete(ctx context.Context, id int64) error {
 }
 
 // Where adds a WHERE condition and returns entities.
-func (r *Generic[T]) Where(ctx context.Context, condition string, args ...interface{}) ([]T, error) {
+func (r *Repository[T]) Where(ctx context.Context, condition string, args ...interface{}) ([]T, error) {
 	return NewSelectBuilderFrom[T](r.orm, r.tableName).
 		Where(condition, args...).
 		Execute(ctx)
 }
 
 // First returns the first entity matching the condition.
-func (r *Generic[T]) First(ctx context.Context, condition string, args ...interface{}) (*T, error) {
+func (r *Repository[T]) First(ctx context.Context, condition string, args ...interface{}) (*T, error) {
 	entity, err := NewSelectBuilderFrom[T](r.orm, r.tableName).
 		Where(condition, args...).
 		First(ctx)
@@ -196,25 +199,12 @@ func (r *Generic[T]) First(ctx context.Context, condition string, args ...interf
 }
 
 // Count returns the number of entities matching the condition.
-func (r *Generic[T]) Count(ctx context.Context, condition string, args ...interface{}) (int64, error) {
+func (r *Repository[T]) Count(ctx context.Context, condition string, args ...interface{}) (int64, error) {
 	builder := NewSelectBuilderFrom[T](r.orm, r.tableName)
 	if condition != "" {
 		builder = builder.Where(condition, args...)
 	}
 	return builder.Count(ctx)
-}
-
-// Repository provides dynamic access to generic repositories.
-// It wraps the Generic[T] repository to provide a clean interface.
-type Repository[T Entity] struct {
-	generic *Generic[T]
-}
-
-// NewRepository creates a new repository for type T.
-func NewRepository[T Entity](orm *ORM) *Repository[T] {
-	return &Repository[T]{
-		generic: NewGeneric[T](orm),
-	}
 }
 
 // Repositories provides access to all repository instances.
