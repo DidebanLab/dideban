@@ -144,7 +144,7 @@ func (m *Migrator) registerBuiltinMigrations() {
 			CREATE TABLE check_history (
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				check_id INTEGER NOT NULL,
-				status TEXT NOT NULL CHECK (status IN ('up', 'down', 'timeout', 'error') AND length(status) <= 10),
+				status TEXT NOT NULL CHECK (status IN ('up', 'down', 'error', 'timeout') AND length(status) <= 10),
 				response_time_ms INTEGER,
 				status_code INTEGER,
 				error_message TEXT,
@@ -189,6 +189,7 @@ func (m *Migrator) registerBuiltinMigrations() {
 				id INTEGER PRIMARY KEY AUTOINCREMENT,
 				agent_id INTEGER NOT NULL,
 				collect_duration_ms INTEGER NOT NULL,
+				status TEXT NOT NULL CHECK (status IN ('online', 'offline') AND length(status) <= 8),
 				cpu_load_1 REAL NOT NULL,
 				cpu_load_5 REAL NOT NULL,
 				cpu_load_15 REAL NOT NULL,
@@ -237,8 +238,7 @@ func (m *Migrator) registerBuiltinMigrations() {
 				check_id INTEGER,
 				agent_id INTEGER,
 				type TEXT NOT NULL CHECK (type IN ('telegram', 'bale', 'email', 'webhook') AND length(type) <= 20),
-				config TEXT NOT NULL, -- JSON configuration
-				condition_type TEXT,
+				condition_type TEXT NOT NULL,
 				condition_value REAL,
 				enabled BOOLEAN NOT NULL DEFAULT 1,
 				created_at DATETIME DEFAULT CURRENT_TIMESTAMP,

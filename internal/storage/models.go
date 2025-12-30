@@ -259,49 +259,6 @@ type Admin struct {
 	FullName string `db:"full_name,not_null"`
 }
 
-// CheckType constants define the supported check types.
-const (
-	CheckTypeHTTP = "http"
-	CheckTypePing = "ping"
-)
-
-// CheckStatus constants define the possible check statuses.
-const (
-	CheckStatusUp      = "up"
-	CheckStatusDown    = "down"
-	CheckStatusUnknown = "unknown"
-)
-
-// CheckResultStatus constants define the possible check result statuses.
-const (
-	ResultStatusUp    = "up"
-	ResultStatusDown  = "down"
-	ResultStatusError = "error"
-)
-
-// AlertHistoryStatus constants define the possible alert history statuses.
-const (
-	AlertHistoryStatusSent    = "sent"
-	AlertHistoryStatusFailed  = "failed"
-	AlertHistoryStatusPending = "pending"
-)
-
-// AlertType constants define the supported alert types.
-const (
-	AlertTypeTelegram = "telegram"
-	AlertTypeBale     = "bale"
-	AlertTypeEmail    = "email"
-	AlertTypeWebhook  = "webhook"
-)
-
-// AgentStatus constants define the possible agent statuses.
-const (
-	AgentStatusPending = "pending"
-	AgentStatusOnline  = "online"
-	AgentStatusOffline = "offline"
-	AgentStatusUnknown = "unknown"
-)
-
 // TableName methods return the database table name for each model.
 // These are used by the ORM for automatic table name resolution.
 
@@ -340,42 +297,63 @@ func (Admin) TableName() string {
 	return "admins"
 }
 
-// IsValidCheckType validates if a check type is supported.
-func IsValidCheckType(checkType string) bool {
-	switch checkType {
-	case CheckTypeHTTP, CheckTypePing:
-		return true
-	default:
-		return false
-	}
+// CheckType constants define the supported check types.
+const (
+	CheckTypeHTTP = "http"
+	CheckTypePing = "ping"
+)
+
+// CheckTypes contains all possible check types.
+var CheckTypes = []string{CheckTypeHTTP, CheckTypePing}
+
+// CheckStatus constants define the possible check result statuses.
+const (
+	CheckStatusUp      = "up"
+	CheckStatusDown    = "down"
+	CheckStatusError   = "error"
+	CheckStatusTimeout = "timeout"
+)
+
+// CheckStatuses contains all possible check statuses.
+var CheckStatuses = []string{CheckStatusUp, CheckStatusDown, CheckStatusError, CheckStatusTimeout}
+
+// AlertType constants define the supported alert types.
+const (
+	AlertTypeTelegram = "telegram"
+	AlertTypeBale     = "bale"
+	AlertTypeEmail    = "email"
+	AlertTypeWebhook  = "webhook"
+)
+
+// AlertTypes contains all possible alert types.
+var AlertTypes = []string{AlertTypeTelegram, AlertTypeBale, AlertTypeEmail, AlertTypeWebhook}
+
+// AlertStatus constants define the possible alert history statuses.
+const (
+	AlertStatusSent    = "sent"
+	AlertStatusFailed  = "failed"
+	AlertStatusPending = "pending"
+)
+
+// AlertStatuses contains all possible alert statuses.
+var AlertStatuses = []string{AlertStatusSent, AlertStatusFailed, AlertStatusPending}
+
+// AlertConditionTypes contains all possible alert condition types.
+var AlertConditionTypes = []string{
+	"status_down",
+	"status_timeout",
+	"status_error",
+	"cpu_usage_high",
+	"memory_usage_high",
+	"disk_usage_high",
+	"agent_offline",
 }
 
-// IsValidCheckStatus validates if a check status is valid.
-func IsValidCheckStatus(status string) bool {
-	switch status {
-	case CheckStatusUp, CheckStatusDown, CheckStatusUnknown:
-		return true
-	default:
-		return false
-	}
-}
+// AgentStatus constants define the possible agent statuses.
+const (
+	AgentStatusOnline  = "online"
+	AgentStatusOffline = "offline"
+)
 
-// IsValidAlertType validates if an alert type is supported.
-func IsValidAlertType(alertType string) bool {
-	switch alertType {
-	case AlertTypeTelegram, AlertTypeBale, AlertTypeEmail, AlertTypeWebhook:
-		return true
-	default:
-		return false
-	}
-}
-
-// IsValidAgentStatus validates if an agent status is valid.
-func IsValidAgentStatus(status string) bool {
-	switch status {
-	case AgentStatusPending, AgentStatusOnline, AgentStatusOffline, AgentStatusUnknown:
-		return true
-	default:
-		return false
-	}
-}
+// AgentStatuses contains all possible agent statuses.
+var AgentStatuses = []string{AgentStatusOnline, AgentStatusOffline}
