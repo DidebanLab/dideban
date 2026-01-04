@@ -28,6 +28,20 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("scheduler.default_interval", "60s")
 	v.SetDefault("scheduler.max_retries", 3)
 
+	// Checks defaults
+	v.SetDefault("checks.http.method", "GET")
+	v.SetDefault("checks.http.headers", map[string]string{})
+	v.SetDefault("checks.http.body", "")
+	v.SetDefault("checks.http.timeout_seconds", 10)
+	v.SetDefault("checks.http.expected_status", 200)
+	v.SetDefault("checks.http.expected_content", "")
+	v.SetDefault("checks.http.follow_redirects", true)
+	v.SetDefault("checks.http.verify_ssl", true)
+	v.SetDefault("checks.ping.count", 3)
+	v.SetDefault("checks.ping.interval_ms", 1000)
+	v.SetDefault("checks.ping.packet_size", 56)
+	v.SetDefault("checks.ping.timeout_seconds", 5)
+
 	// Log defaults
 	v.SetDefault("log.level", "info")
 	v.SetDefault("log.pretty", false)

@@ -24,6 +24,7 @@ type Config struct {
 	Storage   StorageConfig   `mapstructure:"storage" yaml:"storage"`
 	Alert     AlertConfig     `mapstructure:"alert" yaml:"alert"`
 	Scheduler SchedulerConfig `mapstructure:"scheduler" yaml:"scheduler"`
+	Checks    ChecksConfig    `mapstructure:"checks" yaml:"checks"`
 	Log       LogConfig       `mapstructure:"log" yaml:"log"`
 }
 
@@ -58,6 +59,29 @@ type SchedulerConfig struct {
 	WorkerCount     int           `mapstructure:"worker_count" yaml:"worker_count"`
 	DefaultInterval time.Duration `mapstructure:"default_interval" yaml:"default_interval"`
 	MaxRetries      int           `mapstructure:"max_retries" yaml:"max_retries"`
+}
+
+type ChecksConfig struct {
+	HTTP HTTPDefaultsConfig `mapstructure:"http" yaml:"http"`
+	Ping PingDefaultsConfig `mapstructure:"ping" yaml:"ping"`
+}
+
+type HTTPDefaultsConfig struct {
+	Method          string            `mapstructure:"method" yaml:"method"`
+	Headers         map[string]string `mapstructure:"headers" yaml:"headers"`
+	Body            string            `mapstructure:"body" yaml:"body"`
+	TimeoutSeconds  int               `mapstructure:"timeout_seconds" yaml:"timeout_seconds"`
+	ExpectedStatus  int               `mapstructure:"expected_status" yaml:"expected_status"`
+	ExpectedContent string            `mapstructure:"expected_content" yaml:"expected_content"`
+	FollowRedirects bool              `mapstructure:"follow_redirects" yaml:"follow_redirects"`
+	VerifySSL       bool              `mapstructure:"verify_ssl" yaml:"verify_ssl"`
+}
+
+type PingDefaultsConfig struct {
+	Count          int `mapstructure:"count" yaml:"count"`
+	IntervalMs     int `mapstructure:"interval_ms" yaml:"interval_ms"`
+	PacketSize     int `mapstructure:"packet_size" yaml:"packet_size"`
+	TimeoutSeconds int `mapstructure:"timeout_seconds" yaml:"timeout_seconds"`
 }
 
 type LogConfig struct {

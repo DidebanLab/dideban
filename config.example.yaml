@@ -87,6 +87,48 @@ scheduler:
   # Maximum retry attempts on check failure (default: 3)
   max_retries: 3
 
+# Check Configuration Defaults
+checks:
+  # HTTP/HTTPS Check Defaults
+  http:
+    # Default HTTP method (default: "GET")
+    method: "GET"
+    
+    # Default headers to include in all HTTP checks
+    headers: {}
+    
+    # Default request body (default: "")
+    body: ""
+    
+    # Default timeout for HTTP requests in seconds (default: 10)
+    timeout_seconds: 10
+    
+    # Default expected HTTP status code (default: 200)
+    expected_status: 200
+    
+    # Default expected content in response (default: "")
+    expected_content: ""
+    
+    # Follow HTTP redirects by default (default: true)
+    follow_redirects: true
+    
+    # Verify SSL certificates by default (default: true)
+    verify_ssl: true
+  
+  # Ping Check Defaults
+  ping:
+    # Default number of ping packets (default: 3)
+    count: 3
+    
+    # Default interval between pings in milliseconds (default: 1000)
+    interval_ms: 1000
+    
+    # Default packet size in bytes (default: 56)
+    packet_size: 56
+    
+    # Default timeout per packet in seconds (default: 5)
+    timeout_seconds: 5
+
 # Logging Configuration
 log:
   # Log level (default: "info")
