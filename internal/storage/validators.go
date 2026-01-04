@@ -13,6 +13,39 @@ import (
 	"time"
 )
 
+// HTTPDefaultsConfig represents default HTTP check configuration.
+type HTTPDefaultsConfig struct {
+	Method          string            `mapstructure:"method" yaml:"method"`
+	Headers         map[string]string `mapstructure:"headers" yaml:"headers"`
+	Body            string            `mapstructure:"body" yaml:"body"`
+	TimeoutSeconds  int               `mapstructure:"timeout_seconds" yaml:"timeout_seconds"`
+	ExpectedStatus  int               `mapstructure:"expected_status" yaml:"expected_status"`
+	ExpectedContent string            `mapstructure:"expected_content" yaml:"expected_content"`
+	FollowRedirects bool              `mapstructure:"follow_redirects" yaml:"follow_redirects"`
+	VerifySSL       bool              `mapstructure:"verify_ssl" yaml:"verify_ssl"`
+}
+
+// PingDefaultsConfig represents default ping check configuration.
+type PingDefaultsConfig struct {
+	Count          int `mapstructure:"count" yaml:"count"`
+	IntervalMs     int `mapstructure:"interval_ms" yaml:"interval_ms"`
+	PacketSize     int `mapstructure:"packet_size" yaml:"packet_size"`
+	TimeoutSeconds int `mapstructure:"timeout_seconds" yaml:"timeout_seconds"`
+}
+
+// Global defaults for validation - set by application initialization
+var (
+	globalHTTPDefaults *HTTPDefaultsConfig
+	globalPingDefaults *PingDefaultsConfig
+)
+
+// SetValidationDefaults sets the global defaults used by validation functions.
+// This should be called during application initialization with config values.
+func SetValidationDefaults(httpDefaults *HTTPDefaultsConfig, pingDefaults *PingDefaultsConfig) {
+	globalHTTPDefaults = httpDefaults
+	globalPingDefaults = pingDefaults
+}
+
 // ValidateCheck validates a complete Check entity before database operations.
 func ValidateCheck(check *Check) error {
 	// Validate required fields
@@ -385,7 +418,7 @@ func validateCheckTarget(checkType, target string) error {
 // validateHTTPCheckTarget validates HTTP/HTTPS check targets.
 func validateHTTPCheckTarget(target string) error {
 	// Add scheme if missing
-	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+	if !strings.Contains(target, "://") {
 		target = "https://" + target
 	}
 
@@ -401,27 +434,36 @@ func validateHTTPCheckTarget(target string) error {
 	}
 
 	// Validate host
-	if parsedURL.Host == "" {
-		return fmt.Errorf("missing host in URL")
-	}
-
-	// Validate host format
 	host := parsedURL.Hostname()
 	if host == "" {
-		return fmt.Errorf("invalid host format")
+		return fmt.Errorf("missing host")
 	}
 
-	// Check if it's an IP address or hostname
-	if ip := net.ParseIP(host); ip == nil {
-		// It's a hostname, validate format
-		if len(host) > 253 {
-			return fmt.Errorf("hostname too long (max 253 chars)")
-		}
+	// Host length
+	if len(host) > 253 {
+		return fmt.Errorf("hostname too long")
+	}
 
-		// Basic hostname validation
-		if strings.Contains(host, "..") || strings.HasPrefix(host, ".") || strings.HasSuffix(host, ".") {
-			return fmt.Errorf("invalid hostname format")
-		}
+	// IP is allowed
+	if net.ParseIP(host) != nil {
+		return nil
+	}
+
+	// localhost is allowed
+	if host == "localhost" {
+		return nil
+	}
+
+	// Must contain dot (reject not-a-url)
+	if !strings.Contains(host, ".") {
+		return fmt.Errorf("invalid hostname")
+	}
+
+	// Basic hostname validation
+	if strings.Contains(host, "..") ||
+		strings.HasPrefix(host, ".") ||
+		strings.HasSuffix(host, ".") {
+		return fmt.Errorf("invalid hostname format")
 	}
 
 	return nil
@@ -433,12 +475,82 @@ func validatePingCheckTarget(target string) error {
 		return fmt.Errorf("ping target cannot be empty")
 	}
 
-	// Check if it's an IP address
-	if ip := net.ParseIP(target); ip != nil {
-		return nil // Valid IP address
+	// First try to validate as IPv4
+	if isValidIPv4(target) {
+		return nil
+	}
+
+	// Then try to validate as IPv6
+	if isValidIPv6(target) {
+		return nil
+	}
+
+	// If it contains no letters, it's not a valid hostname (probably an invalid IP)
+	hasLetter := false
+	for _, r := range target {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') {
+			hasLetter = true
+			break
+		}
+	}
+	if !hasLetter {
+		return fmt.Errorf("target is not a valid IP address or hostname")
 	}
 
 	// It's a hostname, validate format
+	return validateHostname(target)
+}
+
+// isValidIPv4 validates IPv4 addresses strictly
+func isValidIPv4(ip string) bool {
+	parts := strings.Split(ip, ".")
+	if len(parts) != 4 {
+		return false
+	}
+
+	for _, part := range parts {
+		if part == "" {
+			return false
+		}
+
+		// Check for leading zeros (except "0" itself)
+		if len(part) > 1 && part[0] == '0' {
+			return false
+		}
+
+		// Parse as integer to validate range
+		val := 0
+		for _, digit := range part {
+			if digit < '0' || digit > '9' {
+				return false
+			}
+			val = val*10 + int(digit-'0')
+			if val > 255 {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// isValidIPv6 validates IPv6 addresses using net.ParseIP but with additional checks
+func isValidIPv6(ip string) bool {
+	// Must contain colons for IPv6
+	if !strings.Contains(ip, ":") {
+		return false
+	}
+
+	parsed := net.ParseIP(ip)
+	if parsed == nil {
+		return false
+	}
+
+	// Make sure it's actually IPv6 (not IPv4-mapped)
+	return parsed.To4() == nil
+}
+
+// validateHostname validates hostname format
+func validateHostname(target string) error {
 	if len(target) > 253 {
 		return fmt.Errorf("hostname too long (max 253 chars)")
 	}
@@ -465,9 +577,133 @@ func validatePingCheckTarget(target string) error {
 func validateCheckConfig(checkType, configStr string) (string, error) {
 	switch checkType {
 	case CheckTypeHTTP:
-		return validateHTTPCheckConfig(configStr)
+		// Convert HTTPDefaultsConfig to HTTPCheckConfig
+		var httpCheckDefaults *HTTPCheckConfig
+		if globalHTTPDefaults != nil {
+			httpCheckDefaults = &HTTPCheckConfig{
+				Method:          globalHTTPDefaults.Method,
+				Headers:         globalHTTPDefaults.Headers,
+				Body:            globalHTTPDefaults.Body,
+				ExpectedStatus:  globalHTTPDefaults.ExpectedStatus,
+				ExpectedContent: globalHTTPDefaults.ExpectedContent,
+				FollowRedirects: globalHTTPDefaults.FollowRedirects,
+				VerifySSL:       globalHTTPDefaults.VerifySSL,
+			}
+		}
+		return ValidateHTTPCheckConfig(configStr, httpCheckDefaults)
 	case CheckTypePing:
-		return validatePingCheckConfig(configStr)
+		// Convert PingDefaultsConfig to PingCheckConfig
+		var pingCheckDefaults *PingCheckConfig
+		if globalPingDefaults != nil {
+			pingCheckDefaults = &PingCheckConfig{
+				Count:    globalPingDefaults.Count,
+				Interval: globalPingDefaults.IntervalMs,
+				Size:     globalPingDefaults.PacketSize,
+			}
+		}
+		return ValidatePingCheckConfig(configStr, pingCheckDefaults)
+	default:
+		return "", fmt.Errorf("unsupported check type: %s", checkType)
+	}
+}
+
+// ValidateCheckWithDefaults validates a complete Check entity with provided defaults.
+func ValidateCheckWithDefaults(check *Check, httpDefaults *HTTPDefaultsConfig, pingDefaults *PingDefaultsConfig) error {
+	// Validate required fields
+	if check.Name == "" {
+		return fmt.Errorf("check name cannot be empty")
+	}
+
+	if len(check.Name) > 100 {
+		return fmt.Errorf("check name too long (max 100 chars)")
+	}
+
+	// Validate name format (alphanumeric, spaces, hyphens, underscores only)
+	for _, char := range check.Name {
+		if !((char >= 'a' && char <= 'z') ||
+			(char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') ||
+			char == ' ' || char == '-' || char == '_') {
+			return fmt.Errorf("check name contains invalid characters (only alphanumeric, spaces, hyphens, underscores allowed)")
+		}
+	}
+
+	// Validate check type
+	if !IsValidCheckType(check.Type) {
+		return fmt.Errorf("unsupported check type: %s", check.Type)
+	}
+
+	// Validate target
+	if check.Target == "" {
+		return fmt.Errorf("check target cannot be empty")
+	}
+
+	if err := validateCheckTarget(check.Type, check.Target); err != nil {
+		return fmt.Errorf("invalid target: %w", err)
+	}
+
+	// Validate intervals
+	if check.IntervalSeconds < 5 {
+		return fmt.Errorf("check interval too short (minimum 5 seconds)")
+	}
+
+	if check.IntervalSeconds > 86400 { // 24 hours
+		return fmt.Errorf("check interval too long (maximum 24 hours)")
+	}
+
+	if check.TimeoutSeconds < 1 {
+		return fmt.Errorf("check timeout too short (minimum 1 second)")
+	}
+
+	if check.TimeoutSeconds > 300 { // 5 minutes
+		return fmt.Errorf("check timeout too long (maximum 5 minutes)")
+	}
+
+	if check.TimeoutSeconds >= check.IntervalSeconds {
+		return fmt.Errorf("check timeout must be less than interval")
+	}
+
+	// Validate and normalize configuration with provided defaults
+	validatedConfig, err := validateCheckConfigWithDefaults(check.Type, check.Config, httpDefaults, pingDefaults)
+	if err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	// Update check with validated config
+	check.Config = validatedConfig
+
+	return nil
+}
+
+// validateCheckConfigWithDefaults validates check configuration for a specific type with provided defaults.
+func validateCheckConfigWithDefaults(checkType, configStr string, httpDefaults *HTTPDefaultsConfig, pingDefaults *PingDefaultsConfig) (string, error) {
+	switch checkType {
+	case CheckTypeHTTP:
+		// Convert HTTPDefaultsConfig to HTTPCheckConfig
+		var httpCheckDefaults *HTTPCheckConfig
+		if httpDefaults != nil {
+			httpCheckDefaults = &HTTPCheckConfig{
+				Method:          httpDefaults.Method,
+				Headers:         httpDefaults.Headers,
+				Body:            httpDefaults.Body,
+				ExpectedStatus:  httpDefaults.ExpectedStatus,
+				ExpectedContent: httpDefaults.ExpectedContent,
+				FollowRedirects: httpDefaults.FollowRedirects,
+				VerifySSL:       httpDefaults.VerifySSL,
+			}
+		}
+		return ValidateHTTPCheckConfig(configStr, httpCheckDefaults)
+	case CheckTypePing:
+		// Convert PingDefaultsConfig to PingCheckConfig
+		var pingCheckDefaults *PingCheckConfig
+		if pingDefaults != nil {
+			pingCheckDefaults = &PingCheckConfig{
+				Count:    pingDefaults.Count,
+				Interval: pingDefaults.IntervalMs,
+				Size:     pingDefaults.PacketSize,
+			}
+		}
+		return ValidatePingCheckConfig(configStr, pingCheckDefaults)
 	default:
 		return "", fmt.Errorf("unsupported check type: %s", checkType)
 	}
@@ -484,15 +720,38 @@ type HTTPCheckConfig struct {
 	VerifySSL       bool              `json:"verify_ssl"`       // Verify SSL certificates (default: true)
 }
 
-// validateHTTPCheckConfig validates HTTP check configuration.
-func validateHTTPCheckConfig(configStr string) (string, error) {
-	// Set defaults
+// ValidateHTTPCheckConfig validates HTTP check configuration with custom defaults.
+func ValidateHTTPCheckConfig(configStr string, defaults *HTTPCheckConfig) (string, error) {
+	// Start with provided defaults or fallback defaults
 	config := &HTTPCheckConfig{
 		Method:          "GET",
 		Headers:         make(map[string]string),
 		ExpectedStatus:  200,
 		FollowRedirects: true,
 		VerifySSL:       true,
+	}
+
+	// Apply custom defaults if provided
+	if defaults != nil {
+		if defaults.Method != "" {
+			config.Method = defaults.Method
+		}
+		if defaults.ExpectedStatus != 0 {
+			config.ExpectedStatus = defaults.ExpectedStatus
+		}
+		config.FollowRedirects = defaults.FollowRedirects
+		config.VerifySSL = defaults.VerifySSL
+		if defaults.Headers != nil {
+			for k, v := range defaults.Headers {
+				config.Headers[k] = v
+			}
+		}
+		if defaults.Body != "" {
+			config.Body = defaults.Body
+		}
+		if defaults.ExpectedContent != "" {
+			config.ExpectedContent = defaults.ExpectedContent
+		}
 	}
 
 	// Parse JSON config if provided
@@ -566,13 +825,26 @@ type PingCheckConfig struct {
 	Size     int `json:"size"`     // Packet size in bytes (default: 56)
 }
 
-// validatePingCheckConfig validates Ping check configuration.
-func validatePingCheckConfig(configStr string) (string, error) {
-	// Set defaults
+// ValidatePingCheckConfig validates Ping check configuration with custom defaults.
+func ValidatePingCheckConfig(configStr string, defaults *PingCheckConfig) (string, error) {
+	// Start with provided defaults or fallback defaults
 	config := &PingCheckConfig{
 		Count:    3,
-		Interval: 1000,
+		Interval: 300,
 		Size:     56,
+	}
+
+	// Apply custom defaults if provided
+	if defaults != nil {
+		if defaults.Count != 0 {
+			config.Count = defaults.Count
+		}
+		if defaults.Interval != 0 {
+			config.Interval = defaults.Interval
+		}
+		if defaults.Size != 0 {
+			config.Size = defaults.Size
+		}
 	}
 
 	// Parse JSON config if provided

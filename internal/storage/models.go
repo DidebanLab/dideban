@@ -341,9 +341,6 @@ const (
 	CheckTypePing = "ping"
 )
 
-// CheckTypes contains all possible check types.
-var CheckTypes = []string{CheckTypeHTTP, CheckTypePing}
-
 // CheckStatus constants define the possible check result statuses.
 const (
 	CheckStatusUp      = "up"
@@ -351,9 +348,6 @@ const (
 	CheckStatusError   = "error"
 	CheckStatusTimeout = "timeout"
 )
-
-// CheckStatuses contains all possible check statuses.
-var CheckStatuses = []string{CheckStatusUp, CheckStatusDown, CheckStatusError, CheckStatusTimeout}
 
 // AlertType constants define the supported alert types.
 const (
@@ -363,9 +357,6 @@ const (
 	AlertTypeWebhook  = "webhook"
 )
 
-// AlertTypes contains all possible alert types.
-var AlertTypes = []string{AlertTypeTelegram, AlertTypeBale, AlertTypeEmail, AlertTypeWebhook}
-
 // AlertStatus constants define the possible alert history statuses.
 const (
 	AlertStatusSent    = "sent"
@@ -373,25 +364,8 @@ const (
 	AlertStatusPending = "pending"
 )
 
-// AlertStatuses contains all possible alert statuses.
-var AlertStatuses = []string{AlertStatusSent, AlertStatusFailed, AlertStatusPending}
-
-// AlertConditionTypes contains all possible alert condition types.
-var AlertConditionTypes = []string{
-	"status_down",
-	"status_timeout",
-	"status_error",
-	"cpu_usage_high",
-	"memory_usage_high",
-	"disk_usage_high",
-	"agent_offline",
-}
-
 // AgentStatus constants define the possible agent statuses.
 const (
 	AgentStatusOnline  = "online"
 	AgentStatusOffline = "offline"
 )
-
-// AgentStatuses contains all possible agent statuses.
-var AgentStatuses = []string{AgentStatusOnline, AgentStatusOffline}
