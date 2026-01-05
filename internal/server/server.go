@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"dideban/internal/config"
+	"dideban/internal/core"
 	"dideban/internal/storage"
 
 	"github.com/rs/zerolog/log"
@@ -79,6 +80,20 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Phase 2: Initialize core monitoring engine
 	// The engine manages schedulers, health checks, and alert dispatchers
+	engine, err := core.NewEngine(s.cfg, db)
+	if err != nil {
+		return fmt.Errorf("failed to initialize engine: %w", err)
+	}
+
+	// Start the monitoring engine (non-blocking)
+	if err := engine.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start engine: %w", err)
+	}
+	defer func() {
+		engine.Stop()
+	}()
+
+	log.Info().Msg("⚙️ Monitoring engine started")
 
 	// Phase 3: Initialize HTTP API server
 	// This serves both the REST API and embedded Svelte UI
