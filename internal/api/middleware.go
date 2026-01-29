@@ -13,52 +13,58 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/go-playground/validator/v10"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
-// ErrorWithContext represents a structured error with context
-type ErrorWithContext struct {
-	Type       string
-	Message    string
-	Details    string
-	StatusCode int
-	Cause      error
-}
-
-func (e *ErrorWithContext) Error() string {
-	return fmt.Sprintf("%s: %s", e.Type, e.Message)
-}
-
-// ErrorHandler middleware handles errors and converts them to consistent API responses
+// ErrorHandler is a top-level Gin middleware responsible for catching
+// errors accumulated during request processing and converting them
+// into a unified, client-friendly HTTP response.
+//
+// This middleware should be registered after all other middlewares
+// that may produce errors via c.Error(err).
 func ErrorHandler() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// Execute remaining handlers in the chain
 		c.Next()
 
-		if len(c.Errors) > 0 {
-			err := c.Errors.Last()
-			handleError(c, err.Err)
+		// If no errors were recorded during the request lifecycle,
+		// there is nothing to handle.
+		if len(c.Errors) == 0 {
+			return
 		}
+
+		// Handle the last error added to the context.
+		// Gin preserves error order, with the most recent error last.
+		handleError(c, c.Errors.Last().Err)
 	}
 }
 
-// handleError converts different error types to appropriate HTTP responses
+// handleError inspects the given error and maps it to an appropriate
+// HTTP status code and response body based on its type and context.
+//
+// It centralizes error-to-response translation to keep handlers clean
+// and enforce consistent API behavior.
 func handleError(c *gin.Context, err error) {
-	// Skip if response already written
+	// If the response has already been written, do not attempt
+	// to modify headers or body.
 	if c.Writer.Written() {
 		return
 	}
 
-	// Log the error with context
+	// Log the error with request-scoped metadata before responding.
 	logError(c, err)
 
-	// Handle custom API errors
-	var apiErr *ErrorWithContext
+	// Handle domain-level API errors with structured context.
+	var apiErr *types.ErrorWithContext
 	if errors.As(err, &apiErr) {
-		c.JSON(apiErr.StatusCode, types.ErrorResponse(apiErr.Type, apiErr.Message, apiErr.Details))
+		status, resp := types.ToLegacyResponse(apiErr)
+		c.JSON(status, resp)
+		c.Abort()
 		return
 	}
 
-	// Handle validation errors from gin binding
+	// Handle validation errors produced by Gin's binding mechanism.
 	var validationErrors validator.ValidationErrors
 	if errors.As(err, &validationErrors) {
 		details := formatValidationErrors(validationErrors)
@@ -66,63 +72,95 @@ func handleError(c *gin.Context, err error) {
 		return
 	}
 
-	// Handle database errors
+	// Handle database-related errors in a dedicated flow.
 	if isDatabaseError(err) {
 		handleDatabaseError(c, err)
 		return
 	}
 
-	// Handle gin binding errors
+	// Handle malformed request payloads or binding failures.
 	if strings.Contains(err.Error(), "bind") || strings.Contains(err.Error(), "unmarshal") {
 		c.JSON(http.StatusBadRequest, types.ValidationErrorResponse("Invalid request format"))
 		return
 	}
 
-	// Handle context cancellation
+	// Handle request context cancellation (timeouts, client disconnects).
 	if errors.Is(err, c.Request.Context().Err()) {
 		c.JSON(http.StatusRequestTimeout, types.TimeoutErrorResponse("Request took too long to process"))
 		return
 	}
 
-	// Default to internal server error
+	// Fallback for any unclassified error.
+	c.Set("error_message", "unexpected internal error")
 	c.JSON(http.StatusInternalServerError, types.InternalErrorResponse("An unexpected error occurred"))
 }
 
-// logError logs the error with appropriate context and level
+// logError logs the given error using structured logging and enriches
+// the log entry with request metadata such as IP, method, path,
+// user identity, and request ID when available.
+//
+// Logging level is determined dynamically based on error severity.
 func logError(c *gin.Context, err error) {
+	// Mark this request as already logged to avoid duplicate logs.
+	c.Set("error_logged", true)
+
+	// Initialize a structured log event with request context.
 	logEvent := log.With().
 		Err(err).
+		Str("ip", c.ClientIP()).
 		Str("method", c.Request.Method).
 		Str("path", c.Request.URL.Path).
-		Str("ip", c.ClientIP()).
 		Str("user_agent", c.Request.UserAgent())
 
-	// Add user context if available
+	// Attach authenticated user identifier if present in context.
 	if userID, exists := c.Get("user_id"); exists {
 		logEvent = logEvent.Interface("user_id", userID)
 	}
 
-	// Add request ID if available
+	// Attach request ID for traceability across services.
 	if requestID := c.GetHeader("X-Request-ID"); requestID != "" {
 		logEvent = logEvent.Str("request_id", requestID)
 	}
 
 	logger := logEvent.Logger()
 
-	// Log at appropriate level based on error type
-	var apiErr *ErrorWithContext
+	// Apply severity level based on API error classification.
+	var apiErr *types.ErrorWithContext
 	if errors.As(err, &apiErr) {
-		if apiErr.StatusCode >= 500 {
-			logger.Error().Msg("API error occurred")
-		} else if apiErr.StatusCode >= 400 {
-			logger.Warn().Msg("API client error")
+		def := types.ErrorDefinitions[apiErr.Type]
+
+		var evt *zerolog.Event
+
+		if def.StatusCode >= 500 {
+			evt = logger.Error()
+		} else if def.StatusCode >= 400 {
+			evt = logger.Warn()
 		} else {
-			logger.Info().Msg("API error handled")
+			evt = logger.Info()
 		}
+
+		// Log the underlying cause if present.
+		if apiErr.Cause != nil {
+			evt = evt.Err(apiErr.Cause)
+		}
+
+		// Include additional error details when available.
+		if apiErr.Details != "" {
+			evt = evt.Str("details", apiErr.Details)
+		}
+
+		evt.
+			Str("error_type", string(apiErr.Type)).
+			Int("status", def.StatusCode).
+			Msg("API error")
 	}
 }
 
-// formatValidationErrors formats validator.ValidationErrors into a readable string
+// formatValidationErrors converts validator.ValidationErrors into a
+// concise, human-readable string suitable for API responses.
+//
+// Each field error is mapped to a descriptive message based on
+// its validation tag.
 func formatValidationErrors(validationErrors validator.ValidationErrors) string {
 	var details []string
 	for _, fieldError := range validationErrors {
@@ -146,13 +184,17 @@ func formatValidationErrors(validationErrors validator.ValidationErrors) string 
 	return strings.Join(details, "; ")
 }
 
-// isDatabaseError checks if an error is database-related
+// isDatabaseError determines whether the given error is likely related
+// to a database operation by checking known error types and keywords.
+//
+// This function is intentionally heuristic-based to support multiple
+// database drivers without tight coupling.
 func isDatabaseError(err error) bool {
 	if err == nil {
 		return false
 	}
 
-	// Check for types database errors
+	// Explicitly check for common sentinel database errors.
 	if errors.Is(err, sql.ErrNoRows) {
 		return true
 	}
@@ -179,8 +221,11 @@ func isDatabaseError(err error) bool {
 	return false
 }
 
-// handleDatabaseError handles database-specific errors
+// handleDatabaseError maps database-specific errors to appropriate
+// HTTP responses while preserving abstraction boundaries between
+// the persistence layer and API layer.
 func handleDatabaseError(c *gin.Context, err error) {
+	// Handle missing records explicitly.
 	if errors.Is(err, sql.ErrNoRows) {
 		c.JSON(http.StatusNotFound, types.NotFoundErrorResponse("resource"))
 		return
@@ -188,23 +233,25 @@ func handleDatabaseError(c *gin.Context, err error) {
 
 	errStr := strings.ToLower(err.Error())
 
-	// Handle constraint violations
+	// Handle unique constraint violations.
 	if strings.Contains(errStr, "unique") || strings.Contains(errStr, "duplicate") {
 		c.JSON(http.StatusConflict, types.ConflictErrorResponse("Resource already exists"))
 		return
 	}
 
+	// Handle invalid foreign key references.
 	if strings.Contains(errStr, "foreign key") {
 		c.JSON(http.StatusBadRequest, types.ValidationErrorResponse("Invalid reference to related resource"))
 		return
 	}
 
+	// Handle generic constraint violations.
 	if strings.Contains(errStr, "constraint") {
 		c.JSON(http.StatusBadRequest, types.ValidationErrorResponse("Data constraint violation"))
 		return
 	}
 
-	// Handle connection issues
+	// Handle database connectivity or availability issues.
 	if strings.Contains(errStr, "connection") || strings.Contains(errStr, "timeout") {
 		c.JSON(http.StatusServiceUnavailable, types.ErrorResponse(
 			"SERVICE_UNAVAILABLE",
@@ -214,41 +261,46 @@ func handleDatabaseError(c *gin.Context, err error) {
 		return
 	}
 
-	// Generic database error
+	// Fallback for uncategorized database errors.
 	c.JSON(http.StatusInternalServerError, types.InternalErrorResponse("Database operation failed"))
 }
 
-// SecurityHeaders middleware adds security headers
+// SecurityHeaders is a middleware that injects common HTTP security
+// headers to reduce exposure to common web vulnerabilities.
 func SecurityHeaders() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
 		c.Header("X-XSS-Protection", "1; mode=block")
-		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		//c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
 		c.Next()
 	}
 }
 
-// RateLimit middleware implements basic rate limiting per IP address
+// RateLimit implements a simple, in-memory, IP-based rate limiting
+// mechanism to protect the API from abuse.
+//
+// This implementation is intentionally minimal and not suitable
+// for distributed or high-throughput environments.
 func RateLimit() gin.HandlerFunc {
-	// Simple in-memory rate limiter
+	// Internal rate limiter state container.
 	type rateLimiter struct {
 		requests map[string][]int64
 		limit    int
-		window   int64 // in seconds
+		window   int64 // window duration in seconds
 	}
 
 	limiter := &rateLimiter{
 		requests: make(map[string][]int64),
-		limit:    100, // 100 requests per window
-		window:   60,  // 60 seconds
+		limit:    100, // maximum requests per window
+		window:   60,  // time window in seconds
 	}
 
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
 		now := time.Now().Unix()
 
-		// Clean old requests
+		// Remove expired request timestamps.
 		if requests, exists := limiter.requests[ip]; exists {
 			var validRequests []int64
 			for _, timestamp := range requests {
@@ -259,7 +311,7 @@ func RateLimit() gin.HandlerFunc {
 			limiter.requests[ip] = validRequests
 		}
 
-		// Check rate limit
+		// Enforce rate limit.
 		if len(limiter.requests[ip]) >= limiter.limit {
 			c.JSON(http.StatusTooManyRequests, types.ErrorResponse(
 				"RATE_LIMIT_EXCEEDED",
@@ -270,16 +322,17 @@ func RateLimit() gin.HandlerFunc {
 			return
 		}
 
-		// Add current request
+		// Record current request timestamp.
 		limiter.requests[ip] = append(limiter.requests[ip], now)
 		c.Next()
 	}
 }
 
-// ContentType middleware ensures proper content type handling
+// ContentType enforces JSON request payloads for write operations
+// and ensures that all responses declare application/json.
 func ContentType() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// For POST and PUT requests, ensure JSON content type
+		// Validate Content-Type for request bodies.
 		if c.Request.Method == "POST" || c.Request.Method == "PUT" {
 			contentType := c.GetHeader("Content-Type")
 			if contentType != "" && contentType != "application/json" {
@@ -293,18 +346,22 @@ func ContentType() gin.HandlerFunc {
 			}
 		}
 
-		// Set response content type
+		// Enforce JSON responses.
 		c.Header("Content-Type", "application/json")
 		c.Next()
 	}
 }
 
-// RequestID middleware adds a unique request ID to each request
+// RequestID ensures that every request has a unique identifier,
+// either propagated from the client or generated locally.
+//
+// The request ID is attached to both the request context and response.
 func RequestID() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		requestID := c.GetHeader("X-Request-ID")
 		if requestID == "" {
-			// Generate a simple request ID (in production, use UUID)
+			// Lightweight request ID generation.
+			// For production systems, a UUID is recommended.
 			requestID = fmt.Sprintf("%d-%s", time.Now().UnixNano(), c.ClientIP())
 		}
 
@@ -314,7 +371,9 @@ func RequestID() gin.HandlerFunc {
 	}
 }
 
-// PanicRecovery provides custom panic recovery with structured error response
+// PanicRecovery provides a custom panic recovery middleware that
+// converts panics into structured JSON error responses and prevents
+// the server from crashing.
 func PanicRecovery() gin.HandlerFunc {
 	return gin.CustomRecovery(func(c *gin.Context, recovered interface{}) {
 		if err, ok := recovered.(string); ok {
@@ -323,7 +382,7 @@ func PanicRecovery() gin.HandlerFunc {
 				"Internal server error",
 				"An unexpected error occurred",
 			))
-			// Log the panic
+			// Log recovered panic message.
 			fmt.Printf("Panic recovered: %s\n", err)
 		} else {
 			c.JSON(http.StatusInternalServerError, types.ErrorResponse(
@@ -331,30 +390,35 @@ func PanicRecovery() gin.HandlerFunc {
 				"Internal server error",
 				"An unexpected error occurred",
 			))
-			// Log the panic
+			// Log recovered panic payload.
 			fmt.Printf("Panic recovered: %v\n", recovered)
 		}
 		c.Abort()
 	})
 }
 
-// LoggerMiddleware creates a custom logging middleware.
+// LoggerMiddleware provides structured request logging with latency,
+// status code, and request metadata.
 //
-// Returns:
-//   - gin.HandlerFunc: Gin middleware function
+// Logging level is derived from the final HTTP status code.
 func LoggerMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		start := time.Now()
 		path := c.Request.URL.Path
 		raw := c.Request.URL.RawQuery
 
-		// Process request
+		// Execute downstream handlers.
 		c.Next()
 
-		// Calculate latency
+		// Skip logging if the error has already been logged.
+		if _, exists := c.Get("error_logged"); exists {
+			return
+		}
+
+		// Measure request latency.
 		latency := time.Since(start)
 
-		// Build log fields
+		// Prepare structured log context.
 		fields := []interface{}{
 			"method", c.Request.Method,
 			"path", path,
@@ -368,7 +432,7 @@ func LoggerMiddleware() gin.HandlerFunc {
 			fields = append(fields, "query", raw)
 		}
 
-		// Log based on status code
+		// Initialize logger with common request fields.
 		status := c.Writer.Status()
 		logEvent := log.With().
 			Str("method", c.Request.Method).
@@ -383,23 +447,28 @@ func LoggerMiddleware() gin.HandlerFunc {
 		}
 
 		logger := logEvent.Logger()
+
+		// Attach aggregated Gin errors if present.
+		if len(c.Errors) > 0 {
+			logEvent = logEvent.Str("error", c.Errors.String())
+		}
+
+		// Emit log entry with appropriate severity.
 		if status >= 500 {
-			logger.Error().Msg("HTTP request")
+			logger.Error().Msg("request failed")
 		} else if status >= 400 {
-			logger.Warn().Msg("HTTP request")
+			logger.Warn().Msg("client error")
 		} else {
-			logger.Info().Msg("HTTP request")
+			logger.Info().Msg("request completed")
 		}
 	}
 }
 
-// TimeoutMiddleware creates a request timeout middleware.
+// TimeoutMiddleware applies a request-scoped context timeout,
+// ensuring that long-running handlers are canceled gracefully.
 //
-// Parameters:
-//   - timeout: Request timeout duration
-//
-// Returns:
-//   - gin.HandlerFunc: Gin middleware function
+// Any downstream operation observing the request context
+// should respect the timeout signal.
 func TimeoutMiddleware(timeout time.Duration) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		ctx, cancel := context.WithTimeout(c.Request.Context(), timeout)

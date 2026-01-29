@@ -1,7 +1,7 @@
 package auth
 
 import (
-	"context"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
+	"gorm.io/gorm"
 )
 
 // Handler handles authentication-related HTTP requests
@@ -68,9 +69,13 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 
 	// Find admin by username
-	admin, err := h.storage.Repositories().Admins.First(context.Background(), "username = ?", req.Username)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, types.AuthenticationErrorResponse("Invalid credentials"))
+	var admin storage.Admin
+	if err := h.storage.DB().Where("username = ?", req.Username).First(&admin).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, types.NotFoundErrorResponse("Admin not found"))
+		} else {
+			c.JSON(http.StatusInternalServerError, types.InternalErrorResponse("Failed to get user details"))
+		}
 		return
 	}
 
@@ -153,9 +158,13 @@ func (h *Handler) Me(c *gin.Context) {
 	}
 
 	// Get admin details from database
-	admin, err := h.storage.Repositories().Admins.GetByID(context.Background(), claims.UserID)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, types.AuthenticationErrorResponse("User not found"))
+	var admin storage.Admin
+	if err := h.storage.DB().Where("id = ?", claims.UserID).First(&admin).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, types.NotFoundErrorResponse("Admin not found"))
+		} else {
+			c.JSON(http.StatusInternalServerError, types.InternalErrorResponse("Failed to get user details"))
+		}
 		return
 	}
 
@@ -201,9 +210,13 @@ func (h *Handler) Refresh(c *gin.Context) {
 	}
 
 	// Get admin details from database
-	admin, err := h.storage.Repositories().Admins.GetByID(context.Background(), claims.UserID)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, types.InternalErrorResponse("Failed to get user details"))
+	var admin storage.Admin
+	if err := h.storage.DB().Where("id = ?", claims.UserID).First(&admin).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusNotFound, types.NotFoundErrorResponse("Admin not found"))
+		} else {
+			c.JSON(http.StatusInternalServerError, types.InternalErrorResponse("Failed to get user details"))
+		}
 		return
 	}
 
