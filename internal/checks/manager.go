@@ -84,15 +84,13 @@ func (m *Manager) ExecuteCheck(ctx context.Context, check *storage.Check) (*stor
 		return nil, fmt.Errorf("unsupported check type: %s", check.Type)
 	}
 
-	log.Debug().Int64("check_id", check.ID).Str("type", check.Type).Str("name", check.Name).Msg("Executing check")
-
 	result, err := checker.Check(ctx, check)
 	if err != nil {
 		log.Error().Int64("check_id", check.ID).Str("type", check.Type).Err(err).Msg("Check failed")
 		return result, err
 	}
 
-	log.Debug().Int64("check_id", check.ID).Str("status", result.Status).Msg("Check completed")
+	log.Debug().Int64("check_id", check.ID).Str("type", check.Type).Str("name", check.Name).Str("status", result.Status).Msg("Check completed")
 	return result, nil
 }
 

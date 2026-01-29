@@ -72,8 +72,6 @@ func (e *Engine) scheduleCheck(check *storage.Check) error {
 // Returns:
 //   - error: Any error that occurred during check execution
 func (e *Engine) executeCheck(ctx context.Context, check *storage.Check) error {
-	log.Debug().Int64("check_id", check.ID).Str("name", check.Name).Msg("Executing check")
-
 	// Create timeout context
 	timeout := time.Duration(check.TimeoutSeconds) * time.Second
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -379,4 +377,23 @@ func (e *Engine) createAlertHistory(alertID int64, checkResultID *int64, agentMe
 				Err(err).Msg("Failed to create alert history")
 		}
 	}
+}
+
+// RemoveCheckFromScheduler removes a scheduled monitoring job for the given check ID.
+//
+// This method safely deregisters the check from the internal scheduler,
+// ensuring that no further executions will occur. It is typically called
+// when a check is deleted via the API or disabled permanently.
+//
+// The operation is idempotent: removing a non-existent job returns nil.
+//
+// Parameters:
+//   - checkID: The unique identifier of the check to remove from scheduling.
+//
+// Returns:
+//   - error: Any error encountered during job removal (e.g., scheduler internal failure).
+//     Returns nil if the job does not exist or is successfully removed.
+func (e *Engine) RemoveCheckFromScheduler(checkID int64) error {
+	jobID := fmt.Sprintf("check_%d", checkID)
+	return e.scheduler.RemoveJob(jobID)
 }

@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"time"
 
+	"dideban/internal/api"
 	"dideban/internal/config"
 	"dideban/internal/core"
 	"dideban/internal/storage"
@@ -76,7 +77,7 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}()
 
-	log.Info().Str("path", s.cfg.Storage.Path).Msg("📦 Storage initialized")
+	log.Info().Str("driver", s.cfg.Storage.Driver).Msg("📦 Storage initialized")
 
 	// Phase 2: Initialize core monitoring engine
 	// The engine manages schedulers, health checks, and alert dispatchers
@@ -97,13 +98,14 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Phase 3: Initialize HTTP API server
 	// This serves both the REST API and embedded Svelte UI
+	apiServer := api.NewServer(s.cfg.Server, engine, db)
 
 	// Start HTTP server in a separate goroutine to avoid blocking
 	// We use a buffered channel to prevent goroutine leaks
 	serverErrors := make(chan error, 1)
 	go func() {
 		log.Info().Str("addr", s.cfg.Server.Addr).Msg("🌐 Starting HTTP server")
-		// ...
+		serverErrors <- apiServer.Start()
 	}()
 
 	// Phase 4: Wait for shutdown signal or server error
@@ -119,11 +121,14 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Phase 5: Graceful shutdown sequence
 	// Give components up to 30 seconds to shut down cleanly
-	_, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
 	// Shutdown HTTP server first to stop accepting new requests
-	// TODO : ...
+	if err := apiServer.Shutdown(shutdownCtx); err != nil {
+		log.Error().Err(err).Msg("Server shutdown error")
+		return fmt.Errorf("failed to shutdown HTTP server: %w", err)
+	}
 
 	log.Info().Msg("Server stopped gracefully")
 	return nil
