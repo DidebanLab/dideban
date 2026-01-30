@@ -97,6 +97,9 @@ type Agent struct {
 	LastSeenAt      *time.Time `gorm:"null;index"`
 	CreatedAt       time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP"`
 	UpdatedAt       time.Time  `gorm:"not null;default:CURRENT_TIMESTAMP"`
+
+	// Composite index for stats query
+	_ struct{} `gorm:"index:idx_agents_enabled_status,columns:enabled,status"`
 }
 
 // TableName returns the database table name for Agent.
