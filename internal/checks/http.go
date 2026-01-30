@@ -4,7 +4,9 @@ package checks
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -246,31 +248,33 @@ func (h *HTTPChecker) createRequest(ctx context.Context, target string, cfg *HTT
 //
 // Returns:
 //   - *storage.CheckHistory: Validation result
-//   - error: Any error that occurred during validation
+//   - error: Only returned if an internal I/O error occurs (e.g., reading body fails)
 func (h *HTTPChecker) validateResponse(checkID int64, resp *http.Response, cfg *HTTPConfig, responseTime int64) (*storage.CheckHistory, error) {
-	// Check status code
+	// Case 1: Status code mismatch → DOWN (not an execution error!)
 	if resp.StatusCode != cfg.ExpectedStatus {
-		err := fmt.Errorf("unexpected status code: got %d, expected %d", resp.StatusCode, cfg.ExpectedStatus)
-		status := h.DetermineErrorStatus(err)
 		statusCode := resp.StatusCode
-		return h.CreateErrorResult(checkID, status, err, responseTime, &statusCode), err
+		errMsg := fmt.Sprintf("unexpected status code: got %d, expected %d", statusCode, cfg.ExpectedStatus)
+		// Use CreateErrorResult but with explicit CheckStatusDown
+		return h.CreateErrorResult(checkID, storage.CheckStatusDown, errors.New(errMsg), responseTime, &statusCode), nil
 	}
 
-	// Check content if specified
+	// Case 2: Expected content missing → DOWN
 	if cfg.ExpectedContent != "" {
-		body := make([]byte, 1024) // Read first 1KB for content check
-		n, _ := resp.Body.Read(body)
-		bodyStr := string(body[:n])
-
-		if !strings.Contains(bodyStr, cfg.ExpectedContent) {
-			err := fmt.Errorf("expected content not found: %s", cfg.ExpectedContent)
-			status := h.DetermineErrorStatus(err)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			// This IS a real execution error (e.g., network dropped mid-response)
 			statusCode := resp.StatusCode
-			return h.CreateErrorResult(checkID, status, err, responseTime, &statusCode), err
+			return h.CreateErrorResult(checkID, storage.CheckStatusError, fmt.Errorf("failed to read response body: %w", err), responseTime, &statusCode), nil
+		}
+
+		if !strings.Contains(string(body), cfg.ExpectedContent) {
+			statusCode := resp.StatusCode
+			errMsg := fmt.Sprintf("expected content not found: %s", cfg.ExpectedContent)
+			return h.CreateErrorResult(checkID, storage.CheckStatusDown, errors.New(errMsg), responseTime, &statusCode), nil
 		}
 	}
 
-	// Create success result
+	// Case 3: Success → UP
 	statusCode := resp.StatusCode
 	return h.CreateSuccessResult(checkID, responseTime, &statusCode, ""), nil
 }

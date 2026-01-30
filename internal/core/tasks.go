@@ -4,6 +4,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -70,35 +71,58 @@ func (e *Engine) scheduleCheck(check *storage.Check) error {
 //   - check: Check to execute
 //
 // Returns:
-//   - error: Any error that occurred during check execution
+//   - error: Any error that occurred during check execution or persistence
 func (e *Engine) executeCheck(ctx context.Context, check *storage.Check) error {
-	// Create timeout context
+	// Create timeout context based on check configuration
 	timeout := time.Duration(check.TimeoutSeconds) * time.Second
 	checkCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	// Execute the check
+	// Execute the check via the appropriate checker
 	result, err := e.checker.ExecuteCheck(checkCtx, check)
 	if err != nil {
-		log.Error().Int64("check_id", check.ID).Str("name", check.Name).Err(err).Msg("Check execution failed")
+		log.Error().
+			Int64("check_id", check.ID).
+			Str("name", check.Name).
+			Err(err).
+			Msg("Check execution failed")
 
-		// Create error result
+		status := storage.CheckStatusError
 		errorMsg := err.Error()
+
+		// Special handling for timeout vs generic error
+		if errors.Is(err, context.DeadlineExceeded) {
+			status = storage.CheckStatusTimeout
+		}
+
+		// Create fallback result when checker fails entirely
 		result = &storage.CheckHistory{
 			CheckID:      check.ID,
-			Status:       storage.CheckStatusError,
+			Status:       status,
 			ErrorMessage: &errorMsg,
 			CheckedAt:    time.Now(),
 		}
 	}
 
-	// Save result to storage using GORM
+	// Validate result before saving (defensive programming)
+	if err := storage.ValidateCheckHistory(result); err != nil {
+		log.Error().
+			Int64("check_id", check.ID).
+			Err(err).
+			Msg("Generated check history failed validation")
+		return fmt.Errorf("invalid check history: %w", err)
+	}
+
+	// Persist result to database
 	if err := e.storage.DB().Create(result).Error; err != nil {
-		log.Error().Int64("check_id", check.ID).Err(err).Msg("Failed to save check result")
+		log.Error().
+			Int64("check_id", check.ID).
+			Err(err).
+			Msg("Failed to save check result")
 		return fmt.Errorf("failed to persist check history: %w", err)
 	}
 
-	// Process result for alerting
+	// Trigger alerting pipeline if needed
 	e.processCheckResult(check, result)
 
 	return nil

@@ -83,7 +83,7 @@ func (p *PingChecker) Check(ctx context.Context, check *storage.Check) (*storage
 	}
 
 	// Execute ping
-	result, err := p.executePing(ctx, target, cfg)
+	result, err := p.executePing(ctx, target, cfg, check.ID)
 	responseTime := time.Since(startTime).Milliseconds()
 
 	if err != nil {
@@ -201,7 +201,7 @@ func (p *PingChecker) resolveTarget(target string) (string, error) {
 // Returns:
 //   - *storage.CheckHistory: Ping result
 //   - error: Any error that occurred during ping execution
-func (p *PingChecker) executePing(ctx context.Context, target string, config *PingConfig) (*storage.CheckHistory, error) {
+func (p *PingChecker) executePing(ctx context.Context, target string, config *PingConfig, checkID int64) (*storage.CheckHistory, error) {
 	// Build platform-specific ping command
 	cmd := p.buildPingCommand(ctx, target, config)
 
@@ -217,7 +217,7 @@ func (p *PingChecker) executePing(ctx context.Context, target string, config *Pi
 	}
 
 	// Parse ping output (platform-specific)
-	return p.parsePingOutput(string(output))
+	return p.parsePingOutput(checkID, string(output))
 }
 
 // parsePingOutput parses the output of the ping command.
@@ -229,14 +229,14 @@ func (p *PingChecker) executePing(ctx context.Context, target string, config *Pi
 // Returns:
 //   - *storage.CheckHistory: Parsed ping result
 //   - error: Any error that occurred during parsing
-func (p *PingChecker) parsePingOutput(output string) (*storage.CheckHistory, error) {
+func (p *PingChecker) parsePingOutput(checkID int64, output string) (*storage.CheckHistory, error) {
 	lines := strings.Split(output, "\n")
 
 	switch runtime.GOOS {
 	case "windows":
-		return p.parseWindowsPingOutput(lines)
+		return p.parseWindowsPingOutput(checkID, lines)
 	default:
-		return p.parseUnixPingOutput(lines)
+		return p.parseUnixPingOutput(checkID, lines)
 	}
 }
 
@@ -281,7 +281,7 @@ func (p *PingChecker) buildPingCommand(ctx context.Context, target string, confi
 // Returns:
 //   - *storage.CheckHistory: Parsed ping result
 //   - error: Any error that occurred during parsing
-func (p *PingChecker) parseUnixPingOutput(lines []string) (*storage.CheckHistory, error) {
+func (p *PingChecker) parseUnixPingOutput(checkID int64, lines []string) (*storage.CheckHistory, error) {
 	// Parse statistics line (e.g., "3 packets transmitted, 3 received, 0% packet loss")
 	var received int
 	var packetLoss float64
@@ -312,7 +312,7 @@ func (p *PingChecker) parseUnixPingOutput(lines []string) (*storage.CheckHistory
 		}
 	}
 
-	return p.createPingResult(received, packetLoss, avgRTT)
+	return p.createPingResult(checkID, received, packetLoss, avgRTT)
 }
 
 // parseWindowsPingOutput parses Windows ping output.
@@ -323,7 +323,7 @@ func (p *PingChecker) parseUnixPingOutput(lines []string) (*storage.CheckHistory
 // Returns:
 //   - *storage.CheckHistory: Parsed ping result
 //   - error: Any error that occurred during parsing
-func (p *PingChecker) parseWindowsPingOutput(lines []string) (*storage.CheckHistory, error) {
+func (p *PingChecker) parseWindowsPingOutput(checkID int64, lines []string) (*storage.CheckHistory, error) {
 	// Parse statistics line (e.g., "Packets: Sent = 4, Received = 4, Lost = 0 (0% loss)")
 	var received int
 	var packetLoss float64
@@ -360,31 +360,36 @@ func (p *PingChecker) parseWindowsPingOutput(lines []string) (*storage.CheckHist
 		avgRTT = totalRTT / float64(rttCount)
 	}
 
-	return p.createPingResult(received, packetLoss, avgRTT)
+	return p.createPingResult(checkID, received, packetLoss, avgRTT)
 }
 
 // createPingResult creates a standardized ping result.
 //
 // Parameters:
+//   - checkID: ID of the check being executed
 //   - received: Number of packets received
 //   - packetLoss: Packet loss percentage
 //   - avgRTT: Average round-trip time in milliseconds
 //
 // Returns:
 //   - *storage.CheckHistory: Standardized ping result
-//   - error: Any error that occurred during result creation
-func (p *PingChecker) createPingResult(received int, packetLoss, avgRTT float64) (*storage.CheckHistory, error) {
-	responseTimeMs := int(avgRTT)
+//   - error: Always returns nil (ping execution always produces a result)
+func (p *PingChecker) createPingResult(checkID int64, received int, packetLoss, avgRTT float64) (*storage.CheckHistory, error) {
+	responseTime := int64(avgRTT)
 
+	// Case 1: No packets received → DOWN
 	if received == 0 {
-		err := fmt.Errorf("100%% packet loss")
-		return p.CreateErrorResult(0, storage.CheckStatusDown, err, int64(responseTimeMs), nil), nil
-	} else if packetLoss > 50 {
-		err := fmt.Errorf("%.1f%% packet loss", packetLoss)
-		return p.CreateErrorResult(0, storage.CheckStatusDown, err, int64(responseTimeMs), nil), nil
+		errMsg := "100% packet loss"
+		return p.CreateErrorResult(checkID, storage.CheckStatusDown, errors.New(errMsg), responseTime, nil), nil
 	}
 
-	// Success case
+	// Case 2: High packet loss (>50%) → DOWN
+	if packetLoss > 50 {
+		errMsg := fmt.Sprintf("%.1f%% packet loss", packetLoss)
+		return p.CreateErrorResult(checkID, storage.CheckStatusDown, errors.New(errMsg), responseTime, nil), nil
+	}
+
+	// Case 3: Acceptable packet loss → UP
 	message := fmt.Sprintf("%.1f%% packet loss", packetLoss)
-	return p.CreateSuccessResult(0, int64(responseTimeMs), nil, message), nil
+	return p.CreateSuccessResult(checkID, responseTime, nil, message), nil
 }
